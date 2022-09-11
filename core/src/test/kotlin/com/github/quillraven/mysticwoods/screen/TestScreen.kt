@@ -20,21 +20,18 @@ import com.github.quillraven.mysticwoods.input.PlayerInputProcessor
 import com.github.quillraven.mysticwoods.system.*
 import com.github.quillraven.mysticwoods.ui.disposeSkin
 import com.github.quillraven.mysticwoods.ui.loadSkin
-import com.github.quillraven.mysticwoods.ui.model.GameModel
-import com.github.quillraven.mysticwoods.ui.view.gameView
 import ktx.app.KtxScreen
 import ktx.assets.disposeSafely
 import ktx.box2d.createWorld
-import ktx.scene2d.actors
 
-class GameScreen : KtxScreen {
+abstract class TestScreen(private var testMapPath: String = "") : KtxScreen {
     private val gameAtlas = TextureAtlas("graphics/game.atlas")
     private val gameStage = Stage(ExtendViewport(16f, 9f))
-    private val uiStage = Stage(ExtendViewport(320f, 180f))
+    val uiStage = Stage(ExtendViewport(320f, 180f))
     private val phWorld = createWorld(gravity = Vector2.Zero).apply {
         autoClearForces = false
     }
-    private val eWorld = world {
+    val eWorld = world {
         injectables {
             add(phWorld)
             add("GameStage", gameStage)
@@ -60,46 +57,34 @@ class GameScreen : KtxScreen {
             add<MoveSystem>()
             add<AttackSystem>()
             add<LootSystem>()
-            // DeadSystem must come before LifeSystem
-            // because LifeSystem will add DeadComponent to an entity and sets its death animation.
-            // Since the DeadSystem is checking if the animation is done it needs to be called after
-            // the death animation is set which will be in the next frame in the AnimationSystem above.
             add<DeadSystem>()
             add<LifeSystem>()
             add<StateSystem>()
             add<CameraSystem>()
             add<FloatingTextSystem>()
             add<RenderSystem>()
-            add<AudioSystem>()
             add<DebugSystem>()
         }
     }
-    private var currentMap: TiledMap? = null
+    private var tiledMap: TiledMap? = null
 
     init {
         loadSkin()
+        eWorld.system<DebugSystem>().enabled = true
         eWorld.systems.forEach { sys ->
             if (sys is EventListener) {
                 gameStage.addListener(sys)
             }
         }
         PlayerInputProcessor(eWorld)
-
-        // UI
-        uiStage.actors {
-            gameView(GameModel(eWorld, gameStage))
-        }
     }
 
     override fun show() {
-        setMap("maps/demo.tmx")
-    }
-
-    private fun setMap(path: String) {
-        currentMap?.disposeSafely()
-        val newMap = TmxMapLoader().load(path)
-        currentMap = newMap
-        gameStage.fire(MapChangeEvent(newMap))
+        tiledMap?.disposeSafely()
+        if (testMapPath.isNotBlank()) {
+            tiledMap = TmxMapLoader().load(testMapPath)
+            gameStage.fire(MapChangeEvent(tiledMap!!))
+        }
     }
 
     override fun resize(width: Int, height: Int) {
@@ -119,7 +104,7 @@ class GameScreen : KtxScreen {
         gameStage.disposeSafely()
         uiStage.disposeSafely()
         gameAtlas.disposeSafely()
-        currentMap?.disposeSafely()
+        tiledMap?.disposeSafely()
         disposeSkin()
     }
 }
