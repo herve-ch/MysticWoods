@@ -36,6 +36,7 @@ class DebugSystem(
         physicRenderer.render(physicWorld, camera.combined)
         shapeRenderer.use(ShapeRenderer.ShapeType.Line, camera.combined) {
             it.setColor(1f, 0f, 0f, 0f)
+            //AABB_RECT is attack area queryAABB, companion singleton
             it.rect(AABB_RECT.x, AABB_RECT.y, AABB_RECT.width - AABB_RECT.x, AABB_RECT.height - AABB_RECT.y)
             it.setColor(1f, 1f, 0f, 0f)
             it.rect(TMP_RECT1.x, TMP_RECT1.y, TMP_RECT1.width, TMP_RECT1.height)
