@@ -32,6 +32,8 @@ import ktx.scene2d.actors
 
 class GameScreen : KtxScreen {
     private val gameAtlas = TextureAtlas("graphics/game.atlas")
+    // tile map is scaled to 1/16 1 tile = 16px so we must scale everything
+    // 16:9 viewport, min width is 16 tiles and min height is 9 tiles. Width is fit first then height is extended. Ratio is kept.
     private val gameStage = Stage(ExtendViewport(16f, 9f))
     private val uiStage = Stage(ExtendViewport(320f, 180f))
     private val phWorld = createWorld(gravity = Vector2.Zero).apply {
