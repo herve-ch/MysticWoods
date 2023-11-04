@@ -1,50 +1,58 @@
 package com.github.quillraven.mysticwoods.screen
 
+import box2dLight.Light
+import box2dLight.RayHandler
 import com.badlogic.gdx.ai.GdxAI
 import com.badlogic.gdx.graphics.g2d.TextureAtlas
-import com.badlogic.gdx.maps.tiled.TiledMap
-import com.badlogic.gdx.maps.tiled.TmxMapLoader
 import com.badlogic.gdx.math.Vector2
 import com.badlogic.gdx.scenes.scene2d.EventListener
-import com.badlogic.gdx.scenes.scene2d.Stage
-import com.badlogic.gdx.utils.viewport.ExtendViewport
 import com.github.quillraven.fleks.world
+import com.github.quillraven.mysticwoods.MysticWoods
 import com.github.quillraven.mysticwoods.component.AIComponent.Companion.AIComponentListener
 import com.github.quillraven.mysticwoods.component.FloatingTextComponent.Companion.FloatingTextComponentListener
 import com.github.quillraven.mysticwoods.component.ImageComponent.Companion.ImageComponentListener
+import com.github.quillraven.mysticwoods.component.LightComponent
+import com.github.quillraven.mysticwoods.component.LightComponent.Companion.LightComponentListener
 import com.github.quillraven.mysticwoods.component.PhysicComponent.Companion.PhysicComponentListener
 import com.github.quillraven.mysticwoods.component.StateComponent.Companion.StateComponentListener
-import com.github.quillraven.mysticwoods.event.MapChangeEvent
-import com.github.quillraven.mysticwoods.event.fire
 import com.github.quillraven.mysticwoods.input.PlayerInputProcessor
 import com.github.quillraven.mysticwoods.input.gdxInputProcessor
 import com.github.quillraven.mysticwoods.system.*
 import com.github.quillraven.mysticwoods.ui.disposeSkin
 import com.github.quillraven.mysticwoods.ui.loadSkin
+import com.github.quillraven.mysticwoods.ui.model.DialogModel
 import com.github.quillraven.mysticwoods.ui.model.GameModel
 import com.github.quillraven.mysticwoods.ui.model.InventoryModel
-import com.github.quillraven.mysticwoods.ui.view.gameView
-import com.github.quillraven.mysticwoods.ui.view.inventoryView
+import com.github.quillraven.mysticwoods.ui.view.*
 import ktx.app.KtxScreen
 import ktx.assets.disposeSafely
 import ktx.box2d.createWorld
 import ktx.scene2d.actors
 
-class GameScreen : KtxScreen {
+class GameScreen(game: MysticWoods) : KtxScreen {
+    private val gameStage = game.gameStage
+    private val uiStage = game.uiStage
     private val gameAtlas = TextureAtlas("graphics/game.atlas")
-    // tile map is scaled to 1/16 1 tile = 16px so we must scale everything
-    // 16:9 viewport, min width is 16 tiles and min height is 9 tiles. Width is fit first then height is extended. Ratio is kept.
-    private val gameStage = Stage(ExtendViewport(16f, 9f))
-    private val uiStage = Stage(ExtendViewport(320f, 180f))
     private val phWorld = createWorld(gravity = Vector2.Zero).apply {
         autoClearForces = false
     }
+    private val rayHandler = RayHandler(phWorld).apply {
+        // don't make light super bright
+        RayHandler.useDiffuseLight(true)
+
+        // player only throws shadows for map environment but not for enemies like slimes
+        Light.setGlobalContactFilter(LightComponent.b2dPlayer, 1, LightComponent.b2dEnvironment)
+
+        setAmbientLight(LightSystem.dayLightColor)
+    }
+
     private val eWorld = world {
         injectables {
             add(phWorld)
             add("GameStage", gameStage)
             add("UiStage", uiStage)
             add("GameAtlas", gameAtlas)
+            add(rayHandler)
         }
 
         components {
@@ -53,6 +61,7 @@ class GameScreen : KtxScreen {
             add<StateComponentListener>()
             add<AIComponentListener>()
             add<FloatingTextComponentListener>()
+            add<LightComponentListener>()
         }
 
         systems {
@@ -65,6 +74,7 @@ class GameScreen : KtxScreen {
             add<MoveSystem>()
             add<AttackSystem>()
             add<LootSystem>()
+            add<DialogSystem>()
             add<InventorySystem>()
             // DeadSystem must come before LifeSystem
             // because LifeSystem will add DeadComponent to an entity and sets its death animation.
@@ -73,14 +83,15 @@ class GameScreen : KtxScreen {
             add<DeadSystem>()
             add<LifeSystem>()
             add<StateSystem>()
+            add<PortalSystem>()
             add<CameraSystem>()
             add<FloatingTextSystem>()
             add<RenderSystem>()
+            add<LightSystem>()
             add<AudioSystem>()
             add<DebugSystem>()
         }
     }
-    private var currentMap: TiledMap? = null
 
     init {
         loadSkin()
@@ -89,33 +100,49 @@ class GameScreen : KtxScreen {
                 gameStage.addListener(sys)
             }
         }
-        PlayerInputProcessor(eWorld, uiStage)
+        PlayerInputProcessor(eWorld, gameStage, uiStage)
         gdxInputProcessor(uiStage)
 
         // UI
         uiStage.actors {
             gameView(GameModel(eWorld, gameStage))
+            dialogView(DialogModel(gameStage))
             inventoryView(InventoryModel(eWorld, gameStage)) {
                 this.isVisible = false
             }
+            pauseView { this.isVisible = false }
         }
     }
 
     override fun show() {
-        setMap("maps/demo.tmx")
+        eWorld.system<PortalSystem>().setMap("maps/demo.tmx")
     }
 
-    private fun setMap(path: String) {
-        currentMap?.disposeSafely()
-        val newMap = TmxMapLoader().load(path)
-        currentMap = newMap
-        gameStage.fire(MapChangeEvent(newMap))
+    private fun pauseWorld(pause: Boolean) {
+        val mandatorySystems = setOf(
+            AnimationSystem::class,
+            CameraSystem::class,
+            RenderSystem::class,
+            DebugSystem::class
+        )
+        eWorld.systems
+            .filter { it::class !in mandatorySystems }
+            .forEach { it.enabled = !pause }
+
+        uiStage.actors.filterIsInstance<PauseView>().first().isVisible = pause
     }
 
     override fun resize(width: Int, height: Int) {
-        gameStage.viewport.update(width, height, true)
-        uiStage.viewport.update(width, height, true)
+        val screenX = gameStage.viewport.screenX
+        val screenY = gameStage.viewport.screenY
+        val screenW = gameStage.viewport.screenWidth
+        val screenH = gameStage.viewport.screenHeight
+        rayHandler.useCustomViewport(screenX, screenY, screenW, screenH)
     }
+
+    override fun pause() = pauseWorld(true)
+
+    override fun resume() = pauseWorld(false)
 
     override fun render(delta: Float) {
         val dt = delta.coerceAtMost(0.25f)
@@ -126,10 +153,8 @@ class GameScreen : KtxScreen {
     override fun dispose() {
         eWorld.dispose()
         phWorld.disposeSafely()
-        gameStage.disposeSafely()
-        uiStage.disposeSafely()
         gameAtlas.disposeSafely()
-        currentMap?.disposeSafely()
         disposeSkin()
+        rayHandler.disposeSafely()
     }
 }
